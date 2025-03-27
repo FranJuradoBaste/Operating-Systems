@@ -1,0 +1,2 @@
+Ejecutando comando: cat archivo_que_no_existe.txt
+cat: archivo_que_no_existe.txt: No such file or directory

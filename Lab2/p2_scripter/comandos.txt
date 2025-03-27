@@ -1,4 +1,2 @@
 ## Script de SSOO
-ls -l
-echo Hola mundo > entrada.txt
-cat < entrada.txt > salida.txt !> errores.txt
+cat archivo_que_no_existe.txt !> errores.txt
