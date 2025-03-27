@@ -1,0 +1,4 @@
+## Script de SSOO
+ls -l
+echo Hola mundo > entrada.txt
+cat < entrada.txt > salida.txt !> errores.txt

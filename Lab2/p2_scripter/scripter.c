@@ -108,72 +108,130 @@ int procesar_linea(char *linea) {
 }
 
 int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        write(STDERR_FILENO, "Uso: ./scripter <fichero_de_comandos>\n", 39);
+        exit(1);
+    }
 
-    int main(int argc, char *argv[]) {
-        if (argc != 2) {
-            write(STDERR_FILENO, "Uso: ./scripter <fichero_de_comandos>\n", 39);
-            exit(1);
-        }
+    int fd = open(argv[1], O_RDONLY);
+    if (fd < 0) {
+        perror("No se pudo abrir el archivo");
+        exit(1);
+    }
 
-        int fd = open(argv[1], O_RDONLY);
-        if (fd < 0) {
-            perror("No se pudo abrir el archivo");
-            exit(1);
-        }
+    char linea[max_line];
 
-        char linea[max_line];
-        int i = 0;
-        char c;
-        int linea_num = 0;
+    int i = 0;
+    char c;
+    int linea_num = 0;
 
-        while (read(fd, &c, 1) == 1) {
-            if (c == '\n' || i >= max_line - 1) {
-                linea[i] = '\0';
+    //Leemos el fichero
+    while (read(fd, &c, 1) == 1) {
+        if (c == '\n' || i >= max_line - 1) {
+            linea[i] = '\0';
+            printf(">> Línea %d: '%s'\n", linea_num, linea);
 
-                if (i == 0) {
-                    write(STDERR_FILENO, "Error: línea vacía encontrada.\n", 31);
+            if (i == 0) {
+                write(STDERR_FILENO, "Error: línea vacía encontrada.\n", 31);
+                close(fd);
+                exit(1);
+            }
+
+            if (linea_num == 0) {
+                if (strcmp(linea, "## Script de SSOO") != 0) {
+                    write(STDERR_FILENO, "Error: cabecera inválida.\n", 27);
                     close(fd);
                     exit(1);
                 }
+            } else {
 
-                if (linea_num == 0) {
-                    if (strcmp(linea, "## Script de SSOO") != 0) {
-                        write(STDERR_FILENO, "Error: cabecera inválida.\n", 27);
-                        close(fd);
+                background = 0;
+                for (int j = 0; j < max_args; j++) argvv[j] = NULL;
+                for (int j = 0; j < max_redirections; j++) filev[j] = NULL;
+
+                // ejecutamos el comando
+                int n_commands = procesar_linea(linea);
+
+                //Ejecutamos los procesos con sus redirecciones
+                pid_t pid = fork();
+                if (pid == 0) {
+                    // Proceso hijo
+                    if (filev[0] != NULL) { // Redirección de entrada
+                        int fd_in = open(filev[0], O_RDONLY);
+                        if (fd_in < 0) {
+                        perror("Error al abrir archivo de entrada");
                         exit(1);
+                        }
+                        dup2(fd_in, STDIN_FILENO);
+                        close(fd_in);
+                        }           
+
+                    if (filev[1] != NULL) { // Redirección de salida
+                        int fd_out = open(filev[1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                        if (fd_out < 0) {
+                        perror("Error al abrir archivo de salida");
+                        exit(1);
+                        }
+                        dup2(fd_out, STDOUT_FILENO);
+                        close(fd_out);
+                        }
+
+                    if (filev[2] != NULL) { // Redirección de error
+                        int fd_err = open(filev[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                        if (fd_err < 0) {
+                        perror("Error al abrir archivo de error");
+                        exit(1);
+                        }
+                        dup2(fd_err, STDERR_FILENO);
+                        close(fd_err);
+                        }
+
+                    // Filtrar argumentos: eliminar redirecciones y sus archivos
+                    char *args_filtrados[max_args];
+                    int real_argc = 0;
+                    for (int k = 0; k < max_args && argvv[k] != NULL; k++) {
+                        if (
+                            strcmp(argvv[k], "<") == 0 ||
+                            strcmp(argvv[k], ">") == 0 ||
+                            strcmp(argvv[k], "!>") == 0
+                        ) {
+                        k++; // saltar el archivo que sigue
+                        } else {
+                        args_filtrados[real_argc++] = argvv[k];
+                        }
+                        }
+                    args_filtrados[real_argc] = NULL;
+                    // Imprimir el comando que se va a ejecutar (debug)
+                    fprintf(stderr, "Ejecutando comando: %s", args_filtrados[0]);
+                    for (int z = 1; args_filtrados[z] != NULL; z++) {
+                        fprintf(stderr, " %s", args_filtrados[z]);
+                        }
+                    fprintf(stderr, "\n");
+                    execvp(args_filtrados[0], args_filtrados);
+                    perror("execvp");
+                    exit(1);
+                    } 
+                else if (pid > 0) {
+                    // Proceso padre
+                    if (!background) {
+                        waitpid(pid, NULL, 0);
+                    } else {
+                        // Solo imprimimos el PID si es background
+                        printf("Proceso en background con PID: %d\n", pid);
                     }
                 } else {
-                    // Aquí vamos al PASO 2: ejecutar el comando
-                    int n_commands = procesar_linea(linea);
-
-                    // Vamos a ejecutar SOLO el primer comando (sin pipes, sin redirecciones aún)
-                    pid_t pid = fork();
-                    if (pid == 0) {
-                        // Proceso hijo
-                        execvp(argvv[0], argvv);
-                        perror("execvp");
-                        exit(1);
-                    } else if (pid > 0) {
-                        // Proceso padre
-                        if (!background) {
-                            waitpid(pid, NULL, 0);
-                        } else {
-                            // Solo imprimimos el PID si es background
-                            printf("Proceso en background con PID: %d\n", pid);
-                        }
-                    } else {
-                        perror("fork");
-                        exit(1);
-                    }
+                    perror("fork");
+                    exit(1);
                 }
-
-                i = 0;
-                linea_num++;
-            } else {
-                linea[i++] = c;
             }
-        }
 
-        close(fd);
-        return 0;
+            i = 0;
+            linea_num++;
+        } else {
+            linea[i++] = c;
+        }
     }
+
+    close(fd);
+    return 0;
+}
