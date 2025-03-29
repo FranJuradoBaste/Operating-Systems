@@ -1,2 +1,7 @@
 ## Script de SSOO
-cat archivo_que_no_existe.txt !> errores.txt
+echo "uno dos tres cuatro" > entradas1.txt
+echo "cinco seis siete ocho" > entradas2.txt
+cat < entradas1.txt | tr ' ' '\n' | sort > ordenado1.txt
+cat < entradas2.txt | tr ' ' '\n' | sort > ordenado2.txt
+cat ordenado1.txt ordenado2.txt | sort > todos.txt
+cat todos.txt
