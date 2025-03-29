@@ -70,10 +70,11 @@ void procesar_redirecciones(char *args[]) {
  * background -- 0 means foreground; 1 background.
  */
 int procesar_linea(char *linea) {
+    //  Separa la línea en subcomandos por '|'
     char *comandos[max_commands];
     int num_comandos = tokenizar_linea(linea, "|", comandos, max_commands);
 
-    //Check if background is indicated
+    //Detectar background en el último subcomando
     if (strchr(comandos[num_comandos - 1], '&')) {
         background = 1;
         char *pos = strchr(comandos[num_comandos - 1], '&'); 
@@ -81,32 +82,113 @@ int procesar_linea(char *linea) {
         *pos = '\0';
     }
 
-    //Finish processing
+
+    //Crear tuberías (si hay más de un subcomando)
+    int pipes[max_commands - 1][2];
+    for (int i = 0; i < num_comandos - 1; i++) {
+        if (pipe(pipes[i]) == -1) {
+            perror("pipe");
+            exit(1);
+        }
+    }
+
+     // 4) Para cada subcomando, fork + exec
     for (int i = 0; i < num_comandos; i++) {
+        // Limpieza de argvv y filev para este subcomando
+        for (int j = 0; j < max_args; j++) argvv[j] = NULL;
+        for (int j = 0; j < max_redirections; j++) filev[j] = NULL;
+
+        // Tokenizar subcomando por espacios
         int args_count = tokenizar_linea(comandos[i], " \t\n", argvv, max_args);
+        // Detectar redirecciones
         procesar_redirecciones(argvv);
 
-        /********* This piece of code prints the command, args, redirections and background. **********/
-        /*********************** REMOVE BEFORE THE SUBMISSION *****************************************/
-        /*********************** IMPLEMENT YOUR CODE FOR PROCESSES MANAGEMENT HERE ********************/
-        printf("Comando = %s\n", argvv[0]);
-        for(int arg = 1; arg < max_args; arg++)
-            if(argvv[arg] != NULL)
-                printf("Args = %s\n", argvv[arg]); 
-                
-        printf("Background = %d\n", background);
-        if(filev[0] != NULL)
-            printf("Redir [IN] = %s\n", filev[0]);
-        if(filev[1] != NULL)
-            printf("Redir [OUT] = %s\n", filev[1]);
-        if(filev[2] != NULL)
-            printf("Redir [ERR] = %s\n", filev[2]);
-        /**********************************************************************************************/
+        // Hacer fork
+        pid_t pid = fork();
+        if (pid < 0) {
+            perror("fork");
+            exit(1);
+        }
+        if (pid == 0) {
+            // Proceso hijo
+
+            // (a) Redirecciones específicas (<, >, !>)
+            //  - Solo primer subcomando usa filev[0] (entrada)
+            //  - Solo último subcomando usa filev[1] (salida)
+            //  - Cualquiera puede usar filev[2] (error)
+            if (i == 0 && filev[0]) {
+                int fd_in = open(filev[0], O_RDONLY);
+                if (fd_in < 0) {
+                    perror("Error al abrir archivo de entrada");
+                    exit(1);
+                }
+                dup2(fd_in, STDIN_FILENO);
+                close(fd_in);
+            }
+            if (i == num_comandos - 1 && filev[1]) {
+                int fd_out = open(filev[1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd_out < 0) {
+                    perror("Error al abrir archivo de salida");
+                    exit(1);
+                }
+                dup2(fd_out, STDOUT_FILENO);
+                close(fd_out);
+            }
+            if (filev[2]) {
+                int fd_err = open(filev[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd_err < 0) {
+                    perror("Error al abrir archivo de error");
+                    exit(1);
+                }
+                dup2(fd_err, STDERR_FILENO);
+                close(fd_err);
+            }
+
+            // (b) Conexión de tuberías
+            if (i > 0) {
+                // No eres el primer subcomando; lees de la tubería anterior
+                dup2(pipes[i-1][0], STDIN_FILENO);
+            }
+            if (i < num_comandos - 1) {
+                // No eres el último; escribes en la tubería actual
+                dup2(pipes[i][1], STDOUT_FILENO);
+            }
+
+            // (c) Cerrar tuberías en hijo
+            for (int k = 0; k < num_comandos - 1; k++) {
+                close(pipes[k][0]);
+                close(pipes[k][1]);
+            }
+
+            // (d) Ejecutar el comando
+            execvp(argvv[0], argvv);
+            perror("execvp");
+            exit(1);
+        }
+        // Proceso padre no hace nada especial aquí; sigue para crear/fork el siguiente subcomando
+    }
+
+    // (e) Cerrar tuberías en padre
+    for (int i = 0; i < num_comandos - 1; i++) {
+        close(pipes[i][0]);
+        close(pipes[i][1]);
+    }
+
+    // (f) Si foreground => esperar hijos, si background => no esperar
+    if (!background) {
+        for (int i = 0; i < num_comandos; i++) {
+            wait(NULL);
+        }
+    } else {
+        // Podrías imprimir el PID del padre o un mensaje
+        write(STDOUT_FILENO, "Comando en background\n", 23);
     }
 
     return num_comandos;
 }
 
+
+    
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         write(STDERR_FILENO, "Uso: ./scripter <fichero_de_comandos>\n", 39);
@@ -120,17 +202,13 @@ int main(int argc, char *argv[]) {
     }
 
     char linea[max_line];
-
     int i = 0;
-    char c;
     int linea_num = 0;
+    char c;
 
-    //Leemos el fichero
     while (read(fd, &c, 1) == 1) {
         if (c == '\n' || i >= max_line - 1) {
             linea[i] = '\0';
-            printf(">> Línea %d: '%s'\n", linea_num, linea);
-
             if (i == 0) {
                 write(STDERR_FILENO, "Error: línea vacía encontrada.\n", 31);
                 close(fd);
@@ -144,94 +222,16 @@ int main(int argc, char *argv[]) {
                     exit(1);
                 }
             } else {
-
-                background = 0;
-                for (int j = 0; j < max_args; j++) argvv[j] = NULL;
-                for (int j = 0; j < max_redirections; j++) filev[j] = NULL;
-
-                // ejecutamos el comando
-                int n_commands = procesar_linea(linea);
-
-                //Ejecutamos los procesos con sus redirecciones
-                pid_t pid = fork();
-                if (pid == 0) {
-                    // Proceso hijo
-                    if (filev[0] != NULL) { // Redirección de entrada
-                        int fd_in = open(filev[0], O_RDONLY);
-                        if (fd_in < 0) {
-                        perror("Error al abrir archivo de entrada");
-                        exit(1);
-                        }
-                        dup2(fd_in, STDIN_FILENO);
-                        close(fd_in);
-                        }           
-
-                    if (filev[1] != NULL) { // Redirección de salida
-                        int fd_out = open(filev[1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                        if (fd_out < 0) {
-                        perror("Error al abrir archivo de salida");
-                        exit(1);
-                        }
-                        dup2(fd_out, STDOUT_FILENO);
-                        close(fd_out);
-                        }
-
-                    if (filev[2] != NULL) { // Redirección de error
-                        int fd_err = open(filev[2], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                        if (fd_err < 0) {
-                        perror("Error al abrir archivo de error");
-                        exit(1);
-                        }
-                        dup2(fd_err, STDERR_FILENO);
-                        close(fd_err);
-                        }
-
-                    // Filtrar argumentos: eliminar redirecciones y sus archivos
-                    char *args_filtrados[max_args];
-                    int real_argc = 0;
-                    for (int k = 0; k < max_args && argvv[k] != NULL; k++) {
-                        if (
-                            strcmp(argvv[k], "<") == 0 ||
-                            strcmp(argvv[k], ">") == 0 ||
-                            strcmp(argvv[k], "!>") == 0
-                        ) {
-                        k++; // saltar el archivo que sigue
-                        } else {
-                        args_filtrados[real_argc++] = argvv[k];
-                        }
-                        }
-                    args_filtrados[real_argc] = NULL;
-                    // Imprimir el comando que se va a ejecutar (debug)
-                    fprintf(stderr, "Ejecutando comando: %s", args_filtrados[0]);
-                    for (int z = 1; args_filtrados[z] != NULL; z++) {
-                        fprintf(stderr, " %s", args_filtrados[z]);
-                        }
-                    fprintf(stderr, "\n");
-                    execvp(args_filtrados[0], args_filtrados);
-                    perror("execvp");
-                    exit(1);
-                    } 
-                else if (pid > 0) {
-                    // Proceso padre
-                    if (!background) {
-                        waitpid(pid, NULL, 0);
-                    } else {
-                        // Solo imprimimos el PID si es background
-                        printf("Proceso en background con PID: %d\n", pid);
-                    }
-                } else {
-                    perror("fork");
-                    exit(1);
-                }
+                // Aquí delegamos TODO a procesar_linea
+                procesar_linea(linea);
             }
-
             i = 0;
             linea_num++;
         } else {
             linea[i++] = c;
         }
     }
-
     close(fd);
     return 0;
 }
+
