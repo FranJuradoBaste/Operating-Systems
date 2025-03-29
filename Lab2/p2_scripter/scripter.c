@@ -82,7 +82,6 @@ int procesar_linea(char *linea) {
         *pos = '\0';
     }
 
-
     //Crear tuberías (si hay más de un subcomando)
     int pipes[max_commands - 1][2];
     for (int i = 0; i < num_comandos - 1; i++) {
@@ -186,6 +185,7 @@ int procesar_linea(char *linea) {
 
     return num_comandos;
 }
+
 
 
     

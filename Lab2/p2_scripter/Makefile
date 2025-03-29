@@ -16,5 +16,8 @@ all: scripter
 scripter: $(OBJ)
 	$(CC) $(FLAGS) -L. -o $@ $< $(LIBS)
 
+mygrep: mygrep.c
+	$(CC) $(FLAGS) -o mygrep mygrep.c
+
 clean:
 	rm -f ./scripter.o ./scripter
